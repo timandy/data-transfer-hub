@@ -274,6 +274,14 @@ export class DataTransferECRStack extends Stack {
       }
     });
 
+    // CfnConditions: only grant secret read when credentials are provided
+    const hasSrcCredential = new CfnCondition(this, "HasSrcCredential", {
+      expression: Fn.conditionNot(Fn.conditionEquals(srcCredential.valueAsString, ""))
+    });
+    const hasDestCredential = new CfnCondition(this, "HasDestCredential", {
+      expression: Fn.conditionNot(Fn.conditionEquals(destCredential.valueAsString, ""))
+    });
+
     const srcSecretParam = secretsmanager.Secret.fromSecretNameV2(this, 'srcSecretParam', srcCredential.valueAsString);
     const desSecretParam = secretsmanager.Secret.fromSecretNameV2(this, 'desSecretParam', destCredential.valueAsString);
 
@@ -290,7 +298,17 @@ export class DataTransferECRStack extends Stack {
     );
 
     selectedImageParam.grantRead(listImagesLambda);
-    srcSecretParam.grantRead(listImagesLambda);
+    // Conditionally grant srcSecret read (only when srcCredential is provided)
+    const srcSecretLambdaPolicy = new iam.Policy(this, 'SrcSecretLambdaReadPolicy', {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+          resources: [`${srcSecretParam.secretArn}-??????`]
+        })
+      ]
+    });
+    (srcSecretLambdaPolicy.node.defaultChild as CfnResource).cfnOptions.condition = hasSrcCredential;
+    listImagesLambda.role!.attachInlinePolicy(srcSecretLambdaPolicy);
 
     const vpc = ec2.Vpc.fromVpcAttributes(this, 'ECSVpc', {
       vpcId: ecsVpcId.valueAsString,
@@ -344,8 +362,28 @@ export class DataTransferECRStack extends Stack {
       family: `${Aws.STACK_NAME}-ECRTransferTask`,
       executionRole: ecsTaskExecutionRole.withoutPolicyUpdates()
     });
-    srcSecretParam.grantRead(taskDefinition.taskRole);
-    desSecretParam.grantRead(taskDefinition.taskRole);
+    // Conditionally grant secret read on task role (only when credentials are provided)
+    const srcSecretTaskPolicy = new iam.Policy(this, 'SrcSecretTaskReadPolicy', {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+          resources: [`${srcSecretParam.secretArn}-??????`]
+        })
+      ]
+    });
+    (srcSecretTaskPolicy.node.defaultChild as CfnResource).cfnOptions.condition = hasSrcCredential;
+    taskDefinition.taskRole.attachInlinePolicy(srcSecretTaskPolicy);
+
+    const destSecretTaskPolicy = new iam.Policy(this, 'DestSecretTaskReadPolicy', {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+          resources: [`${desSecretParam.secretArn}-??????`]
+        })
+      ]
+    });
+    (destSecretTaskPolicy.node.defaultChild as CfnResource).cfnOptions.condition = hasDestCredential;
+    taskDefinition.taskRole.attachInlinePolicy(destSecretTaskPolicy);
 
     const ecrRegistry = 'public.ecr.aws/aws-gcr-solutions'
     const ecrImageName = 'data-transfer-hub-ecr'
