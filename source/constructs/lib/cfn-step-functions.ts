@@ -101,6 +101,7 @@ export class CloudFormationStateMachine extends Construct {
             "autoscaling:DescribeLaunchConfigurations",
             "autoscaling:EnableMetricsCollection",
             "autoscaling:DescribeScalingActivities",
+            "autoscaling:DescribePolicies",
             "autoscaling:PutScalingPolicy",
             "autoscaling:DeletePolicy",
           ],
