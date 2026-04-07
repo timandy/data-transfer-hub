@@ -70,7 +70,7 @@ def list_tasks(progress: str = '', page=1, count=20):
     else:
         conditions = Attr('progress').eq(progress)
 
-    response = transfer_task_table.scan(
+    scan_kwargs = dict(
         FilterExpression=conditions,
         ProjectionExpression="id, createdAt, description, executionArn, #params, #progress, stackId, stackOutputs, stackStatus, templateUrl, #type",
         ExpressionAttributeNames={
@@ -79,8 +79,14 @@ def list_tasks(progress: str = '', page=1, count=20):
             '#type': 'type'
         })
 
-    # Assume all items are returned in the scan request
-    items = response['Items']
+    items = []
+    while True:
+        response = transfer_task_table.scan(**scan_kwargs)
+        items.extend(response['Items'])
+        if 'LastEvaluatedKey' not in response:
+            break
+        scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+
     for item in items:
         item["stackName"] = get_stack_name(item.get("stackId"))
         task_schedule = get_task_param(item, "ec2CronExpression")
