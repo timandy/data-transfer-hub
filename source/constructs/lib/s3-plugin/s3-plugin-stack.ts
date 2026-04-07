@@ -5,6 +5,7 @@ import { Construct } from "constructs";
 import {
   Aws,
   Fn,
+  CfnCondition,
   CfnParameter,
   CfnResource,
   Stack,
@@ -464,12 +465,17 @@ export class DataTransferS3Stack extends Stack {
       `DestBucket`,
       destBucket.valueAsString
     );
+    // CfnCondition: only apply prefix list bucket policy when parameter is not empty
+    const hasPrefixListBucket = new CfnCondition(this, "HasPrefixListBucket", {
+      expression: Fn.conditionNot(Fn.conditionEquals(srcPrefixListBucket.valueAsString, ""))
+    });
+
     const prefixListFileIBucket = s3.Bucket.fromBucketName(
       this,
       `PrefixListFileBucket`,
       srcPrefixListBucket.valueAsString
     );
-    
+
     // Get VPC
     const vpc = ec2.Vpc.fromVpcAttributes(this, "EC2Vpc", {
       vpcId: ec2VpcId.valueAsString,
@@ -578,7 +584,20 @@ export class DataTransferS3Stack extends Stack {
     commonStack.sqsQueue.grantSendMessages(finderStack.finderRole);
     srcIBucket.grantRead(finderStack.finderRole);
     destIBucket.grantRead(finderStack.finderRole);
-    prefixListFileIBucket.grantRead(finderStack.finderRole);
+    // Conditionally grant read on prefix list bucket (only when parameter is provided)
+    const prefixListBucketPolicy = new iam.Policy(this, "PrefixListBucketReadPolicy", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["s3:GetObject*", "s3:GetBucket*", "s3:List*"],
+          resources: [
+            prefixListFileIBucket.bucketArn,
+            `${prefixListFileIBucket.bucketArn}/*`
+          ]
+        })
+      ]
+    });
+    (prefixListBucketPolicy.node.defaultChild as CfnResource).cfnOptions.condition = hasPrefixListBucket;
+    finderStack.finderRole.attachInlinePolicy(prefixListBucketPolicy);
     multipartStateMachine.multiPartControllerStateMachine.grantRead(
       finderStack.finderRole
     );
